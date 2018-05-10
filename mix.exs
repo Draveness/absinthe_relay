@@ -1,7 +1,7 @@
 defmodule AbsintheRelay.Mixfile do
   use Mix.Project
 
-  @version "1.4.3"
+  @version "1.5.0"
 
   def project do
     [
@@ -22,6 +22,7 @@ defmodule AbsintheRelay.Mixfile do
       description: "Relay framework support for Absinthe",
       files: ["lib", "mix.exs", "README*"],
       maintainers: ["Bruce Williams", "Ben Wilson"],
+      organization: "peatio",
       licenses: ["MIT"],
       links: %{github: "https://github.com/absinthe-graphql/absinthe_relay"}
     ]
