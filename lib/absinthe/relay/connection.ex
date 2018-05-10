@@ -343,6 +343,7 @@ defmodule Absinthe.Relay.Connection do
   @spec from_slice(data :: list, offset :: offset, opts :: from_slice_opts) :: {:ok, t}
   def from_slice(items, offset, opts \\ []) do
     {edges, first, last} = build_cursors(items, offset)
+    nodes = edges |> Enum.map(& &1.node)
 
     page_info = %{
       start_cursor: first,
@@ -351,7 +352,7 @@ defmodule Absinthe.Relay.Connection do
       has_next_page: Keyword.get(opts, :has_next_page, false)
     }
 
-    {:ok, %{edges: edges, page_info: page_info}}
+    {:ok, %{edges: edges, nodes: nodes, page_info: page_info}}
   end
 
   @doc """

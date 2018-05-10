@@ -13,6 +13,9 @@ defmodule StarWars.ConnectionTest do
                   name
                 }
               }
+              nodes {
+                name
+              }
               pageInfo {
                 hasPreviousPage
                 hasNextPage
@@ -43,6 +46,10 @@ defmodule StarWars.ConnectionTest do
                   "name" => "Home One"
                 }
               }
+            ],
+            "nodes" => [
+              %{"name" => "Millenium Falcon"},
+              %{"name" => "Home One"}
             ],
             "pageInfo" => %{
               "hasPreviousPage" => true,

@@ -212,12 +212,14 @@ defmodule Absinthe.Relay.Connection.Notation do
 
   defp connection_object_body(naming) do
     edge_type = naming.edge_type_identifier
+    node_type = naming.node_type_identifier
     [private_category_node, private_key_node] = @private_node_type_identifier_path
     [private_category_base, private_key_base] = @private_base_identifier_path
 
     quote do
       field :page_info, type: non_null(:page_info)
       field :edges, type: list_of(unquote(edge_type))
+      field :nodes, type: list_of(unquote(node_type))
 
       private(
         unquote(private_category_node),
