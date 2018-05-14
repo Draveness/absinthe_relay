@@ -494,6 +494,8 @@ defmodule Absinthe.Relay.Connection do
             |> Ecto.Query.where([t], t.id <= ^after_cursor)
             |> Ecto.Query.limit(1)
             |> repo_fun.()
+          else
+            []
           end
 
         query =
