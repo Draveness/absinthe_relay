@@ -214,8 +214,7 @@ defmodule Absinthe.Relay.Connection do
 
   alias Absinthe.Relay.Connection.Options
 
-  @cursor_prefix "arrayconnection:"
-  @record_prefix "record:"
+  @cursor_prefix "cursor:v1:"
 
   @type t :: %{
           edges: [edge],
@@ -279,81 +278,99 @@ defmodule Absinthe.Relay.Connection do
   def from_list(data, args, opts \\ []) do
     with {:ok, direction, limit} <- limit(args, opts[:max]),
          {:ok, offset} <- offset(args) do
-      case offset do
-        {:offset, offset} ->
-          count = length(data)
+      before_cursor = Keyword.get(offset, :before)
+      after_cursor = Keyword.get(offset, :after)
 
-          {offset, limit} =
-            case direction do
-              :forward ->
-                {offset || 0, limit}
+      {previous_data, result_data, next_data} = split_data(data, before_cursor, after_cursor)
 
-              :backward ->
-                end_offset = offset || count
-                start_offset = max(end_offset - limit, 0)
-                limit = if start_offset == 0, do: end_offset, else: limit
-                {start_offset, limit}
-            end
+      has_previous =
+        previous_data
+        |> Enum.count() > 0
 
-          opts =
-            opts
-            |> Keyword.put(:has_previous_page, offset > 0)
-            |> Keyword.put(:has_next_page, count > offset + limit)
-
-          data
-          |> Enum.slice(offset, limit)
-          |> from_slice(offset, opts)
-
-        {:id, value} ->
+      has_previous =
+        has_previous ||
           case direction do
             :forward ->
-              result_data =
-                data
-                |> Enum.filter(&(to_integer(&1.id) > value))
-
-              remaining_data =
-                data
-                |> Enum.filter(&(to_integer(&1.id) <= value))
-
-              opts =
-                opts
-                |> Keyword.put(:has_previous_page, length(remaining_data) > 0)
-                |> Keyword.put(:has_next_page, length(result_data) > limit)
-
-              result_data
-              |> Enum.take(limit)
-              |> from_slice(0, opts)
+              false
 
             :backward ->
-              result_data =
-                data
-                |> Enum.filter(&(to_integer(&1.id) < value))
-
-              remaining_data =
-                data
-                |> Enum.filter(&(to_integer(&1.id) >= value))
-
-              opts =
-                opts
-                |> Keyword.put(:has_previous_page, length(result_data) > limit)
-                |> Keyword.put(:has_next_page, length(remaining_data) > 0)
-
               result_data
-              |> Enum.take(-limit)
-              |> from_slice(0, opts)
+              |> Enum.count() > limit
           end
 
-        {:offset, nil} ->
-          opts =
-            opts
-            |> Keyword.put(:has_previous_page, false)
-            |> Keyword.put(:has_next_page, length(data) > limit)
+      has_next =
+        next_data
+        |> Enum.count() > 0
 
-          data
+      has_next =
+        has_next ||
+          case direction do
+            :backward -> false
+            :forward -> result_data |> Enum.count() > limit
+          end
+
+      opts =
+        opts
+        |> Keyword.put(:has_previous_page, has_previous)
+        |> Keyword.put(:has_next_page, has_next)
+
+      case direction do
+        :forward ->
+          result_data
           |> Enum.take(limit)
-          |> from_slice(0, opts)
+          |> from_slice(opts)
+
+        :backward ->
+          result_data
+          |> Enum.take(-limit)
+          |> from_slice(opts)
       end
     end
+  end
+
+  defp split_data(data, nil, nil) do
+    {[], data, []}
+  end
+
+  defp split_data(data, before_cursor, nil) do
+    next =
+      data
+      |> Enum.filter(&(to_integer(&1.id) >= before_cursor))
+
+    result =
+      data
+      |> Enum.filter(&(to_integer(&1.id) < before_cursor))
+
+    {[], result, next}
+  end
+
+  defp split_data(data, nil, after_cursor) do
+    prev =
+      data
+      |> Enum.filter(&(to_integer(&1.id) <= after_cursor))
+
+    result =
+      data
+      |> Enum.filter(&(to_integer(&1.id) > after_cursor))
+
+    {prev, result, []}
+  end
+
+  defp split_data(data, before_cursor, after_cursor) do
+    prev =
+      data
+      |> Enum.filter(&(to_integer(&1.id) <= after_cursor))
+
+    next =
+      data
+      |> Enum.filter(&(to_integer(&1.id) >= before_cursor))
+
+    result =
+      data
+      |> Enum.filter(&(to_integer(&1.id) > after_cursor))
+      |> Enum.filter(&(to_integer(&1.id) < before_cursor))
+
+    {prev, result, next}
   end
 
   def to_integer(string) when is_binary(string) do
@@ -401,10 +418,10 @@ defmodule Absinthe.Relay.Connection do
   end
   ```
   """
-  @spec from_slice(data :: list, offset :: offset) :: {:ok, t}
-  @spec from_slice(data :: list, offset :: offset, opts :: from_slice_opts) :: {:ok, t}
-  def from_slice(items, offset, opts \\ []) do
-    {edges, first, last} = build_cursors(items, offset)
+  @spec from_slice(data :: list) :: {:ok, t}
+  @spec from_slice(data :: list, opts :: from_slice_opts) :: {:ok, t}
+  def from_slice(items, opts \\ []) do
+    {edges, first, last} = build_cursors(items)
     nodes = edges |> Enum.map(& &1.node)
 
     page_info = %{
@@ -468,35 +485,33 @@ defmodule Absinthe.Relay.Connection do
           query
           |> Ecto.Query.limit(^(limit + 1))
 
-        query =
-          case offset do
-            {:ok, {:offset, value}} ->
-              query
-              |> Ecto.Query.offset(^value)
+        before_cursor = Keyword.get(offset, :before)
+        after_cursor = Keyword.get(offset, :after)
 
-            {:ok, {:id, {:forward, value}}} ->
-              query
-              |> Ecto.Query.where([t], t.id > ^value)
-
-            {:ok, {:id, {:backward, value}}} ->
-              query
-              |> Ecto.Query.where([t], t.id < ^value)
-
-            _ ->
-              query
+        previous_record =
+          if after_cursor do
+            query
+            |> Ecto.Query.where([t], t.id <= ^after_cursor)
+            |> Ecto.Query.limit(1)
+            |> repo_fun.()
           end
+
+        query =
+          if before_cursor, do: query |> Ecto.Query.where([t], t.id < ^before_cursor), else: query
+
+        query =
+          if after_cursor, do: query |> Ecto.Query.where([t], t.id > ^after_cursor), else: query
 
         records =
           query
-          |> Ecto.Query.offset(^offset)
           |> repo_fun.()
 
         opts =
           opts
-          |> Keyword.put(:has_previous_page, offset > 0)
+          |> Keyword.put(:has_previous_page, length(previous_record) > 0)
           |> Keyword.put(:has_next_page, length(records) > limit)
 
-        from_slice(Enum.take(records, limit), offset, opts)
+        from_slice(Enum.take(records, limit), opts)
       end
     end
   else
@@ -514,30 +529,8 @@ defmodule Absinthe.Relay.Connection do
           {:ok, offset, limit} | {:error, any}
   def offset_and_limit_for_query(args, opts) do
     with {:ok, direction, limit} <- limit(args, opts[:max]),
-         {:ok, _offset} <- offset(args) do
-      case offset(args) do
-        {:ok, {:offset, offset}} ->
-          case direction do
-            :forward ->
-              {:ok, {:offset, offset || 0}, limit}
-
-            :backward ->
-              case {offset, opts[:count]} do
-                {nil, nil} ->
-                  {:error,
-                   "You must supply a count (total number of records) option if using `last` without `before`"}
-
-                {nil, value} ->
-                  {:ok, {:offset, max(value - limit, 0)}, limit}
-
-                {value, _} ->
-                  {:ok, {:offset, max(value - limit, 0)}, limit}
-              end
-          end
-
-        {:ok, {:id, id}} ->
-          {:ok, {:id, {direction, id || 0}}, limit}
-      end
+         {:ok, offset} <- offset(args) do
+      {:ok, offset, limit}
     end
   end
 
@@ -577,13 +570,21 @@ defmodule Absinthe.Relay.Connection do
   If no offset is specified in the pagination arguments, this will return `nil`.
   """
   @spec offset(args :: Options.t()) :: {:ok, offset | nil} | {:error, any}
+  def offset(%{before: before_cursor, after: after_cursor})
+      when not is_nil(before_cursor) and not is_nil(after_cursor) do
+    case {cursor_to_record(before_cursor), cursor_to_record(after_cursor)} do
+      {{:ok, [before: before_id]}, {:ok, [after: after_id]}} ->
+        {:ok, [before: before_id, after: after_id]}
+
+      _ ->
+        {:error, "Invalid cursor provided as `before` or `after` argument"}
+    end
+  end
+
   def offset(%{after: cursor}) when not is_nil(cursor) do
     case cursor_to_record(cursor) do
-      {:ok, {:offset, offset}} ->
-        {:ok, {:offset, offset + 1}}
-
-      {:ok, {:id, id}} ->
-        {:ok, {:id, id}}
+      {:ok, id} ->
+        {:ok, [after: id]}
 
       {:error, _} ->
         {:error, "Invalid cursor provided as `after` argument"}
@@ -592,68 +593,52 @@ defmodule Absinthe.Relay.Connection do
 
   def offset(%{before: cursor}) when not is_nil(cursor) do
     case cursor_to_record(cursor) do
-      {:ok, {:offset, offset}} ->
-        {:ok, {:offset, max(offset, 1)}}
-
-      {:ok, {:id, id}} ->
-        {:ok, {:id, id}}
+      {:ok, id} ->
+        {:ok, [before: id]}
 
       {:error, _} ->
         {:error, "Invalid cursor provided as `before` argument"}
     end
   end
 
-  def offset(_), do: {:ok, {:offset, nil}}
+  def offset(_), do: {:ok, []}
 
-  defp build_cursors([], _offset), do: {[], nil, nil}
+  defp build_cursors([]), do: {[], nil, nil}
 
-  defp build_cursors([item | items], offset) do
-    offset = offset || 0
-    first = record_to_cursor(item, offset)
+  defp build_cursors([item | items]) do
+    first = record_to_cursor(item)
 
     first_edge = %{
       node: item,
       cursor: first
     }
 
-    {edges, last} = do_build_cursors(items, offset + 1, [first_edge], first)
+    {edges, last} = do_build_cursors(items, [first_edge], first)
     {edges, first, last}
   end
 
-  defp do_build_cursors([], _, edges, last), do: {Enum.reverse(edges), last}
+  defp do_build_cursors([], edges, last), do: {Enum.reverse(edges), last}
 
-  defp do_build_cursors([item | rest], i, edges, _last) do
-    cursor = record_to_cursor(item, i)
+  defp do_build_cursors([item | rest], edges, _last) do
+    cursor = record_to_cursor(item)
 
     edge = %{
       node: item,
       cursor: cursor
     }
 
-    do_build_cursors(rest, i + 1, [edge | edges], cursor)
+    do_build_cursors(rest, [edge | edges], cursor)
   end
 
-  @doc """
-  Creates the cursor string from an offset.
-  """
-  @spec offset_to_cursor(integer) :: binary
-  def offset_to_cursor(offset) do
-    [@cursor_prefix, to_string(offset)]
-    |> IO.iodata_to_binary()
-    |> Base.encode64()
-  end
-
-  def record_to_cursor(record, offset) do
+  def record_to_cursor(record) do
     id = Map.get(record, :id)
 
     if id do
-      [@record_prefix, to_string(id)]
+      [@cursor_prefix, to_string(id)]
       |> IO.iodata_to_binary()
       |> Base.encode64()
     else
-      [@cursor_prefix, to_string(offset)]
-      |> IO.iodata_to_binary()
-      |> Base.encode64()
+      raise "Record primary key not found"
     end
   end
 
@@ -661,33 +646,13 @@ defmodule Absinthe.Relay.Connection do
     case Base.decode64(cursor) do
       {:ok, @cursor_prefix <> raw} ->
         with {parsed, _} <- Integer.parse(raw) do
-          {:ok, {:offset, parsed}}
-        else
-          _ -> {:error, "Invalid cursor"}
-        end
-
-      {:ok, @record_prefix <> raw} ->
-        with {parsed, _} <- Integer.parse(raw) do
-          {:ok, {:id, parsed}}
+          {:ok, parsed}
         else
           _ -> {:error, "Invalid cursor"}
         end
 
       _ ->
         {:error, "Invalid cursor"}
-    end
-  end
-
-  @doc """
-  Rederives the offset from the cursor string.
-  """
-  @spec cursor_to_offset(binary) :: integer | :error
-  def cursor_to_offset(cursor) do
-    with {:ok, @cursor_prefix <> raw} <- Base.decode64(cursor),
-         {parsed, _} <- Integer.parse(raw) do
-      {:ok, parsed}
-    else
-      _ -> {:error, "Invalid cursor"}
     end
   end
 end
