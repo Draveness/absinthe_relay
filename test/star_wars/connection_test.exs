@@ -82,7 +82,7 @@ defmodule StarWars.ConnectionTest do
       query = """
         query RebelsShipsQuery {
           rebels {
-            ships(last: 3, before: "#{cursor}") {
+            ships(last: 3, before: "#{cursor}", after: "#{"cursor:v1:0" |> Base.encode64}") {
               edges {
                 node {
                   name

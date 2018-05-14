@@ -575,7 +575,7 @@ defmodule Absinthe.Relay.Connection do
   def offset(%{before: before_cursor, after: after_cursor})
       when not is_nil(before_cursor) and not is_nil(after_cursor) do
     case {cursor_to_record(before_cursor), cursor_to_record(after_cursor)} do
-      {{:ok, [before: before_id]}, {:ok, [after: after_id]}} ->
+      {{:ok, before_id}, {:ok, after_id}} ->
         {:ok, [before: before_id, after: after_id]}
 
       _ ->
