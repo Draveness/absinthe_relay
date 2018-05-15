@@ -250,28 +250,30 @@ defmodule Absinthe.Relay.ConnectionTest do
   describe ".offset_and_limit_for_query/2" do
     test "with a cursor" do
       assert Connection.offset_and_limit_for_query(%{first: 10, before: @offset_cursor_1}, []) ==
-               {:ok, [before: 1], 10}
+               {:ok, [before: 1], :forward, 10}
 
       assert Connection.offset_and_limit_for_query(%{first: 5, before: @offset_cursor_2}, []) ==
-               {:ok, [before: 5], 5}
+               {:ok, [before: 5], :forward, 5}
 
       assert Connection.offset_and_limit_for_query(%{last: 10, before: @offset_cursor_1}, []) ==
-               {:ok, [before: 1], 10}
+               {:ok, [before: 1], :backward, 10}
 
       assert Connection.offset_and_limit_for_query(%{last: 5, before: @offset_cursor_2}, []) ==
-               {:ok, [before: 5], 5}
+               {:ok, [before: 5], :backward, 5}
     end
 
     test "without a cursor" do
-      assert Connection.offset_and_limit_for_query(%{first: 10, before: nil}, []) == {:ok, [], 10}
+      assert Connection.offset_and_limit_for_query(%{first: 10, before: nil}, []) ==
+               {:ok, [], :forward, 10}
 
-      assert Connection.offset_and_limit_for_query(%{first: 5, after: nil}, []) == {:ok, [], 5}
+      assert Connection.offset_and_limit_for_query(%{first: 5, after: nil}, []) ==
+               {:ok, [], :forward, 5}
 
       assert Connection.offset_and_limit_for_query(%{last: 10, before: nil}, count: 30) ==
-               {:ok, [], 10}
+               {:ok, [], :backward, 10}
 
       assert Connection.offset_and_limit_for_query(%{last: 5, after: nil}, count: 30) ==
-               {:ok, [], 5}
+               {:ok, [], :backward, 5}
     end
 
     test "with an invalid cursor" do

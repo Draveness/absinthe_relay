@@ -480,7 +480,9 @@ defmodule Absinthe.Relay.Connection do
     def from_query(query, repo_fun, args, opts \\ []) do
       require Ecto.Query
 
-      with {:ok, offset, limit} <- offset_and_limit_for_query(args, opts) do
+      with {:ok, offset, direction, limit} <- offset_and_limit_for_query(args, opts) do
+        original_query = query
+
         query =
           query
           |> Ecto.Query.limit(^(limit + 1))
@@ -488,9 +490,15 @@ defmodule Absinthe.Relay.Connection do
         before_cursor = Keyword.get(offset, :before)
         after_cursor = Keyword.get(offset, :after)
 
-        previous_record =
+        query =
+          if before_cursor, do: query |> Ecto.Query.where([t], t.id < ^before_cursor), else: query
+
+        query =
+          if after_cursor, do: query |> Ecto.Query.where([t], t.id > ^after_cursor), else: query
+
+        previous_records =
           if after_cursor do
-            query
+            original_query
             |> Ecto.Query.where([t], t.id <= ^after_cursor)
             |> Ecto.Query.limit(1)
             |> repo_fun.()
@@ -498,22 +506,45 @@ defmodule Absinthe.Relay.Connection do
             []
           end
 
-        query =
-          if before_cursor, do: query |> Ecto.Query.where([t], t.id < ^before_cursor), else: query
+        next_records =
+          if before_cursor do
+            original_query
+            |> Ecto.Query.where([t], t.id >= ^before_cursor)
+            |> Ecto.Query.limit(1)
+            |> repo_fun.()
+          else
+            []
+          end
 
-        query =
-          if after_cursor, do: query |> Ecto.Query.where([t], t.id > ^after_cursor), else: query
+        case direction do
+          :forward ->
+            records =
+              query
+              |> repo_fun.()
 
-        records =
-          query
-          |> repo_fun.()
+            opts =
+              opts
+              |> Keyword.put(:has_previous_page, length(previous_records) > 0)
+              |> Keyword.put(:has_next_page, length(next_records) > 0 or length(records) > limit)
 
-        opts =
-          opts
-          |> Keyword.put(:has_previous_page, length(previous_record) > 0)
-          |> Keyword.put(:has_next_page, length(records) > limit)
+            from_slice(Enum.take(records, limit), opts)
 
-        from_slice(Enum.take(records, limit), opts)
+          :backward ->
+            records =
+              query
+              |> Ecto.Query.order_by(desc: :id)
+              |> repo_fun.()
+
+            opts =
+              opts
+              |> Keyword.put(
+                :has_previous_page,
+                length(previous_records) > 0 or length(records) > limit
+              )
+              |> Keyword.put(:has_next_page, length(next_records) > 0)
+
+            from_slice(Enum.take(records, limit) |> Enum.reverse(), opts)
+        end
       end
     end
   else
@@ -532,7 +563,7 @@ defmodule Absinthe.Relay.Connection do
   def offset_and_limit_for_query(args, opts) do
     with {:ok, direction, limit} <- limit(args, opts[:max]),
          {:ok, offset} <- offset(args) do
-      {:ok, offset, limit}
+      {:ok, offset, direction, limit}
     end
   end
 
@@ -559,6 +590,7 @@ defmodule Absinthe.Relay.Connection do
   The direction and desired number of records in the pagination arguments.
   """
   @spec limit(args :: Options.t()) :: {:ok, pagination_direction, limit} | {:error, any}
+  def limit(%{first: first, last: last}) when not is_nil(first) and not is_nil(last), do: {:error, "Passing both `first` and `last` values to paginate the connection is not supported."}
   def limit(%{first: first}), do: {:ok, :forward, first}
   def limit(%{last: last}), do: {:ok, :backward, last}
   def limit(_), do: {:error, "You must either supply `:first` or `:last`"}
