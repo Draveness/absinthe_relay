@@ -502,27 +502,27 @@ defmodule Absinthe.Relay.Connection do
           query
           |> Ecto.Query.limit(^(limit + 1))
 
-        # ---------------------------------------------------------forward------------------------------------------------------------
+        # ---------------------------------------------------------asc---------------------------------------------------------------
         #  after_compensation_query(<=) [after_cursor] after_query(>) | before_query(<) [before_cursor] before_compensation_query(>=)
-        # ---------------------------------------------------------forward------------------------------------------------------------
+        # ---------------------------------------------------------asc---------------------------------------------------------------
 
-        # -----------------------------------------------------backward---------------------------------------------------------------
+        # ---------------------------------------------------------desc--------------------------------------------------------------
         #  after_compensation_query(>=) [after_cursor] after_query(<) | before_query(>) [before_cursor] before_compensation_query(<=)
-        # -----------------------------------------------------backward---------------------------------------------------------------
+        # ---------------------------------------------------------desc--------------------------------------------------------------
 
         before_cursor = Keyword.get(offset, :before)
         after_cursor = Keyword.get(offset, :after)
 
         previous_records =
           if after_cursor do
-            case direction do
-              :forward ->
+            case order_by do
+              :asc ->
                 original_query
                 |> Ecto.Query.where([t], t.id <= ^after_cursor)
                 |> Ecto.Query.limit(1)
                 |> repo_fun.()
 
-              :backward ->
+              :desc ->
                 original_query
                 |> Ecto.Query.where([t], t.id >= ^after_cursor)
                 |> Ecto.Query.limit(1)
@@ -534,14 +534,14 @@ defmodule Absinthe.Relay.Connection do
 
         next_records =
           if before_cursor do
-            case direction do
-              :forward ->
+            case order_by do
+              :asc ->
                 original_query
                 |> Ecto.Query.where([t], t.id >= ^before_cursor)
                 |> Ecto.Query.limit(1)
                 |> repo_fun.()
 
-              :backward ->
+              :desc ->
                 original_query
                 |> Ecto.Query.where([t], t.id <= ^before_cursor)
                 |> Ecto.Query.limit(1)
@@ -553,12 +553,12 @@ defmodule Absinthe.Relay.Connection do
 
         query =
           if before_cursor do
-            case direction do
-              :forward ->
+            case order_by do
+              :asc ->
                 query
                 |> Ecto.Query.where([t], t.id < ^before_cursor)
 
-              :backward ->
+              :desc ->
                 query
                 |> Ecto.Query.where([t], t.id > ^before_cursor)
             end
@@ -568,12 +568,12 @@ defmodule Absinthe.Relay.Connection do
 
         query =
           if after_cursor do
-            case direction do
-              :forward ->
+            case order_by do
+              :asc ->
                 query
                 |> Ecto.Query.where([t], t.id > ^after_cursor)
 
-              :backward ->
+              :desc ->
                 query
                 |> Ecto.Query.where([t], t.id < ^after_cursor)
             end
