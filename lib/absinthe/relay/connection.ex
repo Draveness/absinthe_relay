@@ -483,37 +483,102 @@ defmodule Absinthe.Relay.Connection do
       with {:ok, offset, direction, limit} <- offset_and_limit_for_query(args, opts) do
         original_query = query
 
+        order_by =
+          query.order_bys
+          |> Enum.map(&Macro.to_string(Map.get(&1, :expr)))
+          |> Enum.reduce(nil, fn clause, order_by ->
+            if order_by do
+              order_by
+            else
+              case clause do
+                "[asc: &0.id()]" -> :asc
+                "[desc: &0.id()]" -> :desc
+                _ -> order_by
+              end
+            end
+          end) || :asc
+
         query =
           query
           |> Ecto.Query.limit(^(limit + 1))
 
+        # ---------------------------------------------------------forward------------------------------------------------------------
+        #  after_compensation_query(<=) [after_cursor] after_query(>) | before_query(<) [before_cursor] before_compensation_query(>=)
+        # ---------------------------------------------------------forward------------------------------------------------------------
+
+        # -----------------------------------------------------backward---------------------------------------------------------------
+        #  after_compensation_query(>=) [after_cursor] after_query(<) | before_query(>) [before_cursor] before_compensation_query(<=)
+        # -----------------------------------------------------backward---------------------------------------------------------------
+
         before_cursor = Keyword.get(offset, :before)
         after_cursor = Keyword.get(offset, :after)
 
-        query =
-          if before_cursor, do: query |> Ecto.Query.where([t], t.id < ^before_cursor), else: query
-
-        query =
-          if after_cursor, do: query |> Ecto.Query.where([t], t.id > ^after_cursor), else: query
-
         previous_records =
           if after_cursor do
-            original_query
-            |> Ecto.Query.where([t], t.id <= ^after_cursor)
-            |> Ecto.Query.limit(1)
-            |> repo_fun.()
+            case direction do
+              :forward ->
+                original_query
+                |> Ecto.Query.where([t], t.id <= ^after_cursor)
+                |> Ecto.Query.limit(1)
+                |> repo_fun.()
+
+              :backward ->
+                original_query
+                |> Ecto.Query.where([t], t.id >= ^after_cursor)
+                |> Ecto.Query.limit(1)
+                |> repo_fun.()
+            end
           else
             []
           end
 
         next_records =
           if before_cursor do
-            original_query
-            |> Ecto.Query.where([t], t.id >= ^before_cursor)
-            |> Ecto.Query.limit(1)
-            |> repo_fun.()
+            case direction do
+              :forward ->
+                original_query
+                |> Ecto.Query.where([t], t.id >= ^before_cursor)
+                |> Ecto.Query.limit(1)
+                |> repo_fun.()
+
+              :backward ->
+                original_query
+                |> Ecto.Query.where([t], t.id <= ^before_cursor)
+                |> Ecto.Query.limit(1)
+                |> repo_fun.()
+            end
           else
             []
+          end
+
+        query =
+          if before_cursor do
+            case direction do
+              :forward ->
+                query
+                |> Ecto.Query.where([t], t.id < ^before_cursor)
+
+              :backward ->
+                query
+                |> Ecto.Query.where([t], t.id > ^before_cursor)
+            end
+          else
+            query
+          end
+
+        query =
+          if after_cursor do
+            case direction do
+              :forward ->
+                query
+                |> Ecto.Query.where([t], t.id > ^after_cursor)
+
+              :backward ->
+                query
+                |> Ecto.Query.where([t], t.id < ^after_cursor)
+            end
+          else
+            query
           end
 
         case direction do
@@ -590,7 +655,11 @@ defmodule Absinthe.Relay.Connection do
   The direction and desired number of records in the pagination arguments.
   """
   @spec limit(args :: Options.t()) :: {:ok, pagination_direction, limit} | {:error, any}
-  def limit(%{first: first, last: last}) when not is_nil(first) and not is_nil(last), do: {:error, "Passing both `first` and `last` values to paginate the connection is not supported."}
+  def limit(%{first: first, last: last}) when not is_nil(first) and not is_nil(last),
+    do:
+      {:error,
+       "Passing both `first` and `last` values to paginate the connection is not supported."}
+
   def limit(%{first: first}), do: {:ok, :forward, first}
   def limit(%{last: last}), do: {:ok, :backward, last}
   def limit(_), do: {:error, "You must either supply `:first` or `:last`"}
